@@ -53,6 +53,8 @@ addIcon(
 export default class EpubConverterPlugin extends Plugin {
   settings!: EpubConverterSettings;
   logger!: Logger;
+  /** Cached result from startup binary check — avoids re-running on every settings open */
+  binaryInstalled = false;
 
   async onload() {
     await this.loadSettings();
@@ -89,8 +91,8 @@ export default class EpubConverterPlugin extends Plugin {
 
     this.addSettingTab(new EpubConverterSettingTab(this.app, this));
 
-    // Auto-install markitdown if not yet present
-    this._autoInstallIfNeeded();
+    // Check binary once at startup, cache result
+    await this._autoInstallIfNeeded();
   }
 
   /** Show a notice AND write it to the log. */
@@ -103,6 +105,7 @@ export default class EpubConverterPlugin extends Plugin {
   private async _autoInstallIfNeeded() {
     const pluginDir = this.pluginDir();
     const { installed } = await checkBinaryInstalled(pluginDir);
+    this.binaryInstalled = installed;
     if (installed) {
       this.logger.info("Binary check: markitdown already installed");
       return;
@@ -116,6 +119,7 @@ export default class EpubConverterPlugin extends Plugin {
         this.logger.info(`Download: ${msg}`);
       });
       notice.hide();
+      this.binaryInstalled = true;
       this.notify("📚 EPUB Converter: markitdown ready ✅");
     } catch (e) {
       notice.hide();
@@ -370,54 +374,45 @@ class EpubConverterSettingTab extends PluginSettingTab {
     containerEl.empty();
     containerEl.createEl("h2", { text: "EPUB Converter" });
 
-    // ── Installation ────────────────────────────────────────────────────────
-    containerEl.createEl("h3", { text: "markitdown binary" });
+    // ── markitdown binary — only shown when not yet installed ────────────────
+    if (!this.plugin.binaryInstalled) {
+      containerEl.createEl("h3", { text: "markitdown binary" });
+      const statusEl = containerEl.createEl("p", {
+        text: "⏳ markitdown not yet downloaded — click Download or restart Obsidian to trigger auto-download.",
+      });
 
-    const statusEl = containerEl.createEl("p", { text: "Checking…" });
-
-    const pluginDir = this.pluginDir();
-    checkBinaryInstalled(pluginDir).then(({ installed, version }) => {
-      statusEl.setText(
-        installed
-          ? `✅ markitdown ready${version ? " (" + version + ")" : ""}`
-          : "⏳ markitdown not yet downloaded — it will download automatically on first launch, or click Download below."
-      );
-    });
-
-    new Setting(containerEl)
-      .setName("Download / update markitdown")
-      .setDesc(
-        "Downloads the pre-built markitdown binary from the latest GitHub release. No Python required."
-      )
-      .addButton((btn) =>
-        btn
-          .setButtonText("Download")
-          .setCta()
-          .onClick(async () => {
-            btn.setDisabled(true);
-            btn.setButtonText("Downloading…");
-            const notice = new Notice("Downloading markitdown…", 0);
-            try {
-              await downloadBinary(pluginDir, (msg) => {
-                notice.setMessage(msg);
-                this.plugin.logger.info(`Download: ${msg}`);
-              });
-              notice.hide();
-              this.plugin.notify("✅ markitdown ready");
-              const { installed, version } = await checkBinaryInstalled(pluginDir);
-              statusEl.setText(
-                installed
-                  ? `✅ markitdown ready${version ? " (" + version + ")" : ""}`
-                  : "⚠️ Download failed"
-              );
-            } catch (e) {
-              notice.hide();
-              this.plugin.notify(`❌ Download failed: ${(e as Error).message}`, "ERROR", 10000);
-            }
-            btn.setDisabled(false);
-            btn.setButtonText("Download");
-          })
-      );
+      const pluginDir = this.pluginDir();
+      new Setting(containerEl)
+        .setName("Download markitdown")
+        .setDesc("Downloads the pre-built markitdown binary from the latest GitHub release. No Python required.")
+        .addButton((btn) =>
+          btn
+            .setButtonText("Download")
+            .setCta()
+            .onClick(async () => {
+              btn.setDisabled(true);
+              btn.setButtonText("Downloading…");
+              const notice = new Notice("Downloading markitdown…", 0);
+              try {
+                await downloadBinary(pluginDir, (msg) => {
+                  notice.setMessage(msg);
+                  this.plugin.logger.info(`Download: ${msg}`);
+                });
+                notice.hide();
+                this.plugin.binaryInstalled = true;
+                this.plugin.notify("✅ markitdown ready");
+                // Refresh settings to hide this section
+                this.display();
+              } catch (e) {
+                notice.hide();
+                statusEl.setText(`❌ Download failed: ${(e as Error).message}`);
+                this.plugin.notify(`❌ Download failed: ${(e as Error).message}`, "ERROR", 10000);
+                btn.setDisabled(false);
+                btn.setButtonText("Retry");
+              }
+            })
+        );
+    }
 
     // ── Output ──────────────────────────────────────────────────────────────
     containerEl.createEl("h3", { text: "Output" });
@@ -457,7 +452,7 @@ class EpubConverterSettingTab extends PluginSettingTab {
 
     new Setting(containerEl)
       .setName("Enable debug log")
-      .setDesc("Write plugin activity to epub-converter.log inside the plugin folder. Auto-cleaned weekly.")
+      .setDesc("Write plugin activity to epub-converter.log in the plugin folder. Auto-cleaned weekly.")
       .addToggle((toggle) =>
         toggle
           .setValue(this.plugin.settings.debugLog)
@@ -468,17 +463,16 @@ class EpubConverterSettingTab extends PluginSettingTab {
           })
       );
 
+    const logPath = this.plugin.logger.getLogPath();
     new Setting(containerEl)
       .setName("Open log file")
-      .setDesc(`Log location: ${this.plugin.logger.getLogPath()}`)
+      .setDesc(logPath)
       .addButton((btn) =>
-        btn.setButtonText("Open log").onClick(() => {
-          const logPath = this.plugin.logger.getLogPath();
+        btn.setButtonText("Open").onClick(() => {
           if (!fs.existsSync(logPath)) {
-            new Notice("Log file is empty — no entries yet.");
+            new Notice("Log file has no entries yet.");
             return;
           }
-          // Open in default system app (TextEdit / Notepad)
           const { shell } = require("electron");
           shell.openPath(logPath);
         })
