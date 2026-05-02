@@ -31,27 +31,43 @@ export function binaryPath(pluginDir: string): string {
   return path.join(pluginDir, "bin", name);
 }
 
-/** Check if the markitdown binary is present and runnable. */
-export async function checkBinaryInstalled(pluginDir: string): Promise<{ installed: boolean; version?: string }> {
+const STATE_FILE = "state.json";
+
+/** Read the persisted install state. Returns true only if state says installed AND binary still exists. */
+export function readInstallState(pluginDir: string): boolean {
+  try {
+    const statePath = path.join(pluginDir, STATE_FILE);
+    if (!fs.existsSync(statePath)) return false;
+    const state = JSON.parse(fs.readFileSync(statePath, "utf8"));
+    if (!state.binaryInstalled) return false;
+    // Sanity-check: state says installed, verify the file is still there
+    return fs.existsSync(binaryPath(pluginDir));
+  } catch {
+    return false;
+  }
+}
+
+/** Persist the install state to disk so we don't re-check the binary on every startup. */
+export function writeInstallState(pluginDir: string, installed: boolean): void {
+  try {
+    const statePath = path.join(pluginDir, STATE_FILE);
+    fs.writeFileSync(statePath, JSON.stringify({ binaryInstalled: installed, updatedAt: new Date().toISOString() }), "utf8");
+  } catch {
+    // Best-effort
+  }
+}
+
+/** Check if the markitdown binary is present and executable (no subprocess). */
+export function checkBinaryInstalled(pluginDir: string): { installed: boolean } {
   const bin = binaryPath(pluginDir);
   if (!fs.existsSync(bin)) return { installed: false };
-  // Verify it's a real executable (non-empty file with execute permission)
   try {
     const stat = fs.statSync(bin);
-    if (stat.size < 1000) return { installed: false }; // suspiciously small
-    if (process.platform !== "win32") {
-      fs.accessSync(bin, fs.constants.X_OK);
-    }
+    if (stat.size < 1000) return { installed: false };
+    if (process.platform !== "win32") fs.accessSync(bin, fs.constants.X_OK);
+    return { installed: true };
   } catch {
     return { installed: false };
-  }
-  // Best-effort version string (don't fail if subprocess can't run)
-  try {
-    const { stdout } = await execAsync(`"${bin}" --version`, { timeout: 5000 });
-    return { installed: true, version: stdout.trim() };
-  } catch {
-    // Binary exists and is executable even if --version has issues
-    return { installed: true };
   }
 }
 
@@ -137,6 +153,7 @@ export async function downloadBinary(pluginDir: string, onLog: (msg: string) => 
   }
 
   onLog("✓ markitdown binary ready.");
+  writeInstallState(pluginDir, true);
 }
 
 /** Run the markitdown conversion and stream output back. */

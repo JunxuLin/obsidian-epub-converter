@@ -17,6 +17,8 @@ import {
   checkBinaryInstalled,
   deriveOutputFolder,
   downloadBinary,
+  readInstallState,
+  writeInstallState,
   runConversion,
 } from "./converter";
 import { Logger } from "./logger";
@@ -59,10 +61,13 @@ export default class EpubConverterPlugin extends Plugin {
   async onload() {
     await this.loadSettings();
 
-    // Initialise logger — cleans old entries on startup
-    this.logger = new Logger(this.pluginDir(), this.settings.debugLog);
-    this.logger.cleanOldEntries();
+    // All sync setup — does NOT block Obsidian startup
+    const pluginDir = this.pluginDir();
+    this.logger = new Logger(pluginDir, this.settings.debugLog);
     this.logger.info("Plugin loaded");
+
+    // Use persisted state so we never block startup with a filesystem check
+    this.binaryInstalled = readInstallState(pluginDir);
 
     // Ribbon icon – open "Import EPUB" dialog
     this.addRibbonIcon(BOOK_ICON_ID, "EPUB Converter: Import EPUB", () => {
@@ -91,8 +96,23 @@ export default class EpubConverterPlugin extends Plugin {
 
     this.addSettingTab(new EpubConverterSettingTab(this.app, this));
 
-    // Check binary once at startup, cache result
-    await this._autoInstallIfNeeded();
+    // Fire background tasks after Obsidian finishes loading — zero startup cost
+    this.app.workspace.onLayoutReady(() => {
+      this._backgroundStartup(pluginDir);
+    });
+  }
+
+  /** Runs after Obsidian layout is ready — never blocks startup. */
+  private _backgroundStartup(pluginDir: string) {
+    // Clean old log entries async (synchronous I/O on large files would stall)
+    setTimeout(() => this.logger.cleanOldEntries(), 0);
+
+    // Auto-install only if state says not installed
+    if (!this.binaryInstalled) {
+      this._autoInstallIfNeeded(pluginDir);
+    } else {
+      this.logger.info("Binary already installed (from state file)");
+    }
   }
 
   /** Show a notice AND write it to the log. */
@@ -101,13 +121,13 @@ export default class EpubConverterPlugin extends Plugin {
     this.logger.log(level, msg);
   }
 
-  /** Download markitdown binary in the background on first use, without blocking startup. */
-  private async _autoInstallIfNeeded() {
-    const pluginDir = this.pluginDir();
-    const { installed } = await checkBinaryInstalled(pluginDir);
+  /** Download markitdown binary in the background — never blocks startup. */
+  private async _autoInstallIfNeeded(pluginDir: string) {
+    const { installed } = checkBinaryInstalled(pluginDir);
     this.binaryInstalled = installed;
     if (installed) {
-      this.logger.info("Binary check: markitdown already installed");
+      this.logger.info("Binary check: found on disk, updating state file");
+      writeInstallState(pluginDir, true);
       return;
     }
 
