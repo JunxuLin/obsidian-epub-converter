@@ -100,10 +100,20 @@ export default class EpubConverterPlugin extends Plugin {
 
   /** Convert an epub path (vault-relative or absolute) */
   async convertEpub(epubVaultRelOrAbsolute: string) {
+    if (!epubVaultRelOrAbsolute) {
+      new Notice("❌ EPUB Converter: No file path provided.", 8000);
+      return;
+    }
+
     const vaultRoot = (this.app.vault.adapter as any).getBasePath?.() ?? "";
     const epubAbsolute = path.isAbsolute(epubVaultRelOrAbsolute)
       ? epubVaultRelOrAbsolute
       : path.join(vaultRoot, epubVaultRelOrAbsolute);
+
+    if (!fs.existsSync(epubAbsolute)) {
+      new Notice(`❌ EPUB Converter: File not found:\n${epubAbsolute}`, 10000);
+      return;
+    }
 
     const booksDir = path.join(vaultRoot, this.settings.outputFolder);
     fs.mkdirSync(booksDir, { recursive: true });
@@ -131,23 +141,26 @@ export default class EpubConverterPlugin extends Plugin {
   }
 
   private pluginDir(): string {
-    return path.join(
+    // this.manifest.dir is the absolute path Obsidian provides for the plugin folder
+    return (this as any).manifest?.dir ?? path.join(
       (this.app.vault.adapter as any).getBasePath?.() ?? "",
-      ".obsidian",
-      "plugins",
-      "epub-converter"
+      ".obsidian", "plugins", "epub-converter"
     );
   }
 
   private async _runConversion(epubAbsolute: string, outputDir: string) {
+    const pluginDir = this.pluginDir();
     const notice = new Notice(`📚 Importing "${path.basename(epubAbsolute)}"…`, 0);
+    console.log("[EPUB Converter] pluginDir:", pluginDir);
+    console.log("[EPUB Converter] epubAbsolute:", epubAbsolute);
+    console.log("[EPUB Converter] outputDir:", outputDir);
 
     try {
       await runConversion(
         epubAbsolute,
         outputDir,
         this.settings,
-        this.pluginDir(),
+        pluginDir,
         {
           onLog: (msg) => console.log("[EPUB Converter]", msg),
           onDone: () => {
@@ -157,7 +170,7 @@ export default class EpubConverterPlugin extends Plugin {
           },
           onError: (err) => {
             notice.hide();
-            new Notice(`❌ EPUB Converter error: ${err}`, 10000);
+            new Notice(`❌ EPUB Converter: ${err}`, 10000);
           },
         }
       );
@@ -218,8 +231,13 @@ class ImportEpubModal extends Modal {
           input.onchange = async () => {
             const file = input.files?.[0];
             if (!file) return;
+            const filePath = (file as any).path as string | undefined;
+            if (!filePath) {
+              new Notice("❌ Could not get file path. Try dragging the EPUB into your vault first.", 8000);
+              return;
+            }
             this.close();
-            await this.plugin.convertEpub((file as any).path ?? (file as any).webkitRelativePath ?? "");
+            await this.plugin.convertEpub(filePath);
           };
           input.click();
         })
@@ -403,7 +421,9 @@ class EpubConverterSettingTab extends PluginSettingTab {
   }
 
   private pluginDir(): string {
-    const vaultRoot = (this.app.vault.adapter as any).getBasePath?.() ?? "";
-    return path.join(vaultRoot, ".obsidian", "plugins", "epub-converter");
+    return (this.plugin as any).manifest?.dir ?? path.join(
+      (this.app.vault.adapter as any).getBasePath?.() ?? "",
+      ".obsidian", "plugins", "epub-converter"
+    );
   }
 }
