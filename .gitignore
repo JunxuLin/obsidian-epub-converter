@@ -2,3 +2,6 @@ node_modules/
 main.js
 *.js.map
 bin/
+
+epub-converter.log
+state.json
