@@ -170,10 +170,13 @@ export default class EpubConverterPlugin extends Plugin {
 
   private async _runConversion(epubAbsolute: string, outputDir: string) {
     const pluginDir = this.pluginDir();
+    const startTime = Date.now();
     const notice = new Notice(`📚 Importing "${path.basename(epubAbsolute)}"…`, 0);
-    console.log("[EPUB Converter] pluginDir:", pluginDir);
-    console.log("[EPUB Converter] epubAbsolute:", epubAbsolute);
-    console.log("[EPUB Converter] outputDir:", outputDir);
+
+    const elapsed = () => {
+      const s = ((Date.now() - startTime) / 1000).toFixed(1);
+      return `${s}s`;
+    };
 
     try {
       await runConversion(
@@ -182,21 +185,24 @@ export default class EpubConverterPlugin extends Plugin {
         this.settings,
         pluginDir,
         {
-          onLog: (msg) => console.log("[EPUB Converter]", msg),
+          onLog: (msg) => {
+            console.log("[EPUB Converter]", msg);
+            notice.setMessage(`📚 Importing "${path.basename(epubAbsolute)}"… (${elapsed()})`);
+          },
           onDone: () => {
             notice.hide();
-            new Notice(`✅ Import complete: ${path.basename(outputDir)}`);
+            new Notice(`✅ Import complete: ${path.basename(outputDir)} — took ${elapsed()}`);
             this._refreshVault(outputDir);
           },
           onError: (errMsg) => {
             notice.hide();
-            new Notice(`❌ ${err(ERR.CONVERSION_FAILED, errMsg)}`, 10000);
+            new Notice(`❌ ${err(ERR.CONVERSION_FAILED, errMsg)} (after ${elapsed()})`, 10000);
           },
         }
       );
     } catch (e) {
       notice.hide();
-      new Notice(`❌ ${err(ERR.UNKNOWN, (e as Error).message)}`, 10000);
+      new Notice(`❌ ${err(ERR.UNKNOWN, (e as Error).message)} (after ${elapsed()})`, 10000);
     }
   }
 
