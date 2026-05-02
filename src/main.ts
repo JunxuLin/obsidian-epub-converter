@@ -1,5 +1,6 @@
 import {
   App,
+  FileSystemAdapter,
   Menu,
   Modal,
   Notice,
@@ -82,6 +83,9 @@ export default class EpubConverterPlugin extends Plugin {
     this.addSettingTab(new EpubConverterSettingTab(this.app, this));
 
     // Auto-install markitdown if not yet present
+    const resolvedPluginDir = this.pluginDir();
+    console.log("[EPUB Converter] pluginDir resolved to:", resolvedPluginDir);
+    new Notice(`[EPUB Converter DEBUG] pluginDir: ${resolvedPluginDir}`, 15000);
     this._autoInstallIfNeeded();
   }
 
@@ -159,11 +163,12 @@ export default class EpubConverterPlugin extends Plugin {
   }
 
   private pluginDir(): string {
-    // manifest.dir is vault-relative (.obsidian/plugins/epub-converter)
-    // Must combine with vault root to get absolute path
-    const vaultRoot = (this.app.vault.adapter as any).getBasePath?.() ?? "";
-    const relDir = (this as any).manifest?.dir ?? `.obsidian/plugins/epub-converter`;
-    return path.join(vaultRoot, relDir);
+    const adapter = this.app.vault.adapter;
+    const dir = this.manifest.dir ?? ".obsidian/plugins/epub-converter";
+    if (adapter instanceof FileSystemAdapter) {
+      return adapter.getFullPath(dir);
+    }
+    return path.join((adapter as any).getBasePath?.() ?? "", dir);
   }
 
   private async _runConversion(epubAbsolute: string, outputDir: string) {
@@ -416,8 +421,11 @@ class EpubConverterSettingTab extends PluginSettingTab {
   }
 
   private pluginDir(): string {
-    const vaultRoot = (this.app.vault.adapter as any).getBasePath?.() ?? "";
-    const relDir = (this.plugin as any).manifest?.dir ?? `.obsidian/plugins/epub-converter`;
-    return path.join(vaultRoot, relDir);
+    const adapter = this.plugin.app.vault.adapter;
+    const dir = this.plugin.manifest.dir ?? ".obsidian/plugins/epub-converter";
+    if (adapter instanceof FileSystemAdapter) {
+      return adapter.getFullPath(dir);
+    }
+    return path.join((adapter as any).getBasePath?.() ?? "", dir);
   }
 }
