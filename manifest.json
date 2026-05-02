@@ -1,0 +1,11 @@
+{
+  "id": "epub-converter",
+  "name": "EPUB Converter",
+  "version": "1.0.0",
+  "minAppVersion": "1.4.0",
+  "description": "Import EPUB books into your vault as organized Markdown folders, powered by markitdown.",
+  "author": "JunxuLin",
+  "authorUrl": "https://github.com/JunxuLin",
+  "fundingUrl": "",
+  "isDesktopOnly": true
+}
