@@ -142,15 +142,11 @@ export async function runConversion(
     return;
   }
 
-  const args: string[] = [epubPath, "--split-by-chapter", outputDir];
-
-  if (settings.saveImages) {
-    args.push("--save-images", outputDir);
-  }
-
-  if (!settings.organize) {
-    args.push("--no-organize");
-  }
+  const args: string[] = [
+    epubPath,
+    "--split-by-chapter", outputDir,
+    "--save-images", outputDir,
+  ];
 
   progress.onLog(`Running: markitdown ${args.join(" ")}`);
 

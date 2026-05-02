@@ -141,11 +141,11 @@ export default class EpubConverterPlugin extends Plugin {
   }
 
   private pluginDir(): string {
-    // this.manifest.dir is the absolute path Obsidian provides for the plugin folder
-    return (this as any).manifest?.dir ?? path.join(
-      (this.app.vault.adapter as any).getBasePath?.() ?? "",
-      ".obsidian", "plugins", "epub-converter"
-    );
+    // manifest.dir is vault-relative (.obsidian/plugins/epub-converter)
+    // Must combine with vault root to get absolute path
+    const vaultRoot = (this.app.vault.adapter as any).getBasePath?.() ?? "";
+    const relDir = (this as any).manifest?.dir ?? `.obsidian/plugins/epub-converter`;
+    return path.join(vaultRoot, relDir);
   }
 
   private async _runConversion(epubAbsolute: string, outputDir: string) {
@@ -380,28 +380,6 @@ class EpubConverterSettingTab extends PluginSettingTab {
           })
       );
 
-    new Setting(containerEl)
-      .setName("Save images")
-      .setDesc("Extract and save embedded images to an assets/ subfolder.")
-      .addToggle((toggle) =>
-        toggle.setValue(this.plugin.settings.saveImages).onChange(async (value) => {
-          this.plugin.settings.saveImages = value;
-          await this.plugin.saveSettings();
-        })
-      );
-
-    new Setting(containerEl)
-      .setName("Organize chapters")
-      .setDesc(
-        "Sort chapters into front-matter/, chapters/, back-matter/ subdirectories."
-      )
-      .addToggle((toggle) =>
-        toggle.setValue(this.plugin.settings.organize).onChange(async (value) => {
-          this.plugin.settings.organize = value;
-          await this.plugin.saveSettings();
-        })
-      );
-
     // ── Conflicts ───────────────────────────────────────────────────────────
     containerEl.createEl("h3", { text: "Conflicts" });
 
@@ -421,9 +399,8 @@ class EpubConverterSettingTab extends PluginSettingTab {
   }
 
   private pluginDir(): string {
-    return (this.plugin as any).manifest?.dir ?? path.join(
-      (this.app.vault.adapter as any).getBasePath?.() ?? "",
-      ".obsidian", "plugins", "epub-converter"
-    );
+    const vaultRoot = (this.app.vault.adapter as any).getBasePath?.() ?? "";
+    const relDir = (this.plugin as any).manifest?.dir ?? `.obsidian/plugins/epub-converter`;
+    return path.join(vaultRoot, relDir);
   }
 }
