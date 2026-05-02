@@ -19,6 +19,7 @@ import {
   downloadBinary,
   runConversion,
 } from "./converter";
+import { Logger } from "./logger";
 
 // ── Error codes ───────────────────────────────────────────────────────────────
 export const ERR = {
@@ -33,7 +34,7 @@ export const ERR = {
   UNKNOWN:             "EC-099",  // unexpected error
 } as const;
 
-function err(code: string, msg: string) {
+function fmtErr(code: string, msg: string) {
   return `[${code}] ${msg}`;
 }
 
@@ -51,9 +52,15 @@ addIcon(
 // ── plugin ──────────────────────────────────────────────────────────────────
 export default class EpubConverterPlugin extends Plugin {
   settings!: EpubConverterSettings;
+  logger!: Logger;
 
   async onload() {
     await this.loadSettings();
+
+    // Initialise logger — cleans old entries on startup
+    this.logger = new Logger(this.pluginDir(), this.settings.debugLog);
+    this.logger.cleanOldEntries();
+    this.logger.info("Plugin loaded");
 
     // Ribbon icon – open "Import EPUB" dialog
     this.addRibbonIcon(BOOK_ICON_ID, "EPUB Converter: Import EPUB", () => {
@@ -86,23 +93,35 @@ export default class EpubConverterPlugin extends Plugin {
     this._autoInstallIfNeeded();
   }
 
+  /** Show a notice AND write it to the log. */
+  notify(msg: string, level: "INFO" | "WARN" | "ERROR" = "INFO", timeoutMs = 4000) {
+    new Notice(msg, timeoutMs);
+    this.logger.log(level, msg);
+  }
+
   /** Download markitdown binary in the background on first use, without blocking startup. */
   private async _autoInstallIfNeeded() {
     const pluginDir = this.pluginDir();
     const { installed } = await checkBinaryInstalled(pluginDir);
-    if (installed) return;
+    if (installed) {
+      this.logger.info("Binary check: markitdown already installed");
+      return;
+    }
 
+    this.logger.info("Binary not found — starting auto-download");
     const notice = new Notice("📚 EPUB Converter: Downloading markitdown… (first-time setup)", 0);
     try {
       await downloadBinary(pluginDir, (msg) => {
         notice.setMessage(`📚 EPUB Converter: ${msg}`);
+        this.logger.info(`Download: ${msg}`);
       });
       notice.hide();
-      new Notice("📚 EPUB Converter: markitdown ready ✅");
+      this.notify("📚 EPUB Converter: markitdown ready ✅");
     } catch (e) {
       notice.hide();
-      new Notice(
-        `❌ ${err(ERR.DOWNLOAD_FAILED, (e as Error).message)} — Open Settings → EPUB Converter to retry.`,
+      this.notify(
+        `❌ ${fmtErr(ERR.DOWNLOAD_FAILED, (e as Error).message)} — Open Settings → EPUB Converter to retry.`,
+        "ERROR",
         15000
       );
     }
@@ -119,7 +138,7 @@ export default class EpubConverterPlugin extends Plugin {
   /** Convert an epub path (vault-relative or absolute) */
   async convertEpub(epubVaultRelOrAbsolute: string) {
     if (!epubVaultRelOrAbsolute) {
-      new Notice(`❌ ${err(ERR.FILE_PATH_MISSING, "No file path received from picker.")}`, 8000);
+      this.notify(`❌ ${fmtErr(ERR.FILE_PATH_MISSING, "No file path received from picker.")}`, "ERROR", 8000);
       return;
     }
 
@@ -128,8 +147,10 @@ export default class EpubConverterPlugin extends Plugin {
       ? epubVaultRelOrAbsolute
       : path.join(vaultRoot, epubVaultRelOrAbsolute);
 
+    this.logger.info(`Convert requested: ${epubAbsolute}`);
+
     if (!fs.existsSync(epubAbsolute)) {
-      new Notice(`❌ ${err(ERR.FILE_NOT_FOUND, `File not found:\n${epubAbsolute}`)}`, 10000);
+      this.notify(`❌ ${fmtErr(ERR.FILE_NOT_FOUND, `File not found: ${epubAbsolute}`)}`, "ERROR", 10000);
       return;
     }
 
@@ -138,14 +159,16 @@ export default class EpubConverterPlugin extends Plugin {
       booksDir = path.join(vaultRoot, this.settings.outputFolder);
       fs.mkdirSync(booksDir, { recursive: true });
     } catch (e) {
-      new Notice(`❌ ${err(ERR.OUTPUT_DIR_FAILED, `Cannot create output folder: ${(e as Error).message}`)}`, 10000);
+      this.notify(`❌ ${fmtErr(ERR.OUTPUT_DIR_FAILED, `Cannot create output folder: ${(e as Error).message}`)}`, "ERROR", 10000);
       return;
     }
 
     const outputDir = deriveOutputFolder(epubAbsolute, booksDir, this.settings.onConflict);
 
     if (this.settings.onConflict === "ask" && fs.existsSync(outputDir)) {
+      this.logger.info(`Conflict detected for output dir: ${outputDir}`);
       new ConflictModal(this.app, outputDir, async (choice) => {
+        this.logger.info(`Conflict resolved: ${choice}`);
         if (choice === "rename") {
           const alt = deriveOutputFolder(epubAbsolute + "_", booksDir, "rename");
           await this._runConversion(epubAbsolute, alt);
@@ -178,6 +201,8 @@ export default class EpubConverterPlugin extends Plugin {
       return `${s}s`;
     };
 
+    this.logger.info(`Conversion started: ${path.basename(epubAbsolute)} → ${outputDir}`);
+
     try {
       await runConversion(
         epubAbsolute,
@@ -186,23 +211,27 @@ export default class EpubConverterPlugin extends Plugin {
         pluginDir,
         {
           onLog: (msg) => {
-            console.log("[EPUB Converter]", msg);
+            this.logger.info(`markitdown: ${msg}`);
             notice.setMessage(`📚 Importing "${path.basename(epubAbsolute)}"… (${elapsed()})`);
           },
           onDone: () => {
+            const msg = `✅ Import complete: ${path.basename(outputDir)} — took ${elapsed()}`;
             notice.hide();
-            new Notice(`✅ Import complete: ${path.basename(outputDir)} — took ${elapsed()}`);
+            this.notify(msg);
+            this.logger.info(`Conversion done in ${elapsed()}: ${outputDir}`);
             this._refreshVault(outputDir);
           },
           onError: (errMsg) => {
+            const msg = `❌ ${fmtErr(ERR.CONVERSION_FAILED, errMsg)} (after ${elapsed()})`;
             notice.hide();
-            new Notice(`❌ ${err(ERR.CONVERSION_FAILED, errMsg)} (after ${elapsed()})`, 10000);
+            this.notify(msg, "ERROR", 10000);
           },
         }
       );
     } catch (e) {
+      const msg = `❌ ${fmtErr(ERR.UNKNOWN, (e as Error).message)} (after ${elapsed()})`;
       notice.hide();
-      new Notice(`❌ ${err(ERR.UNKNOWN, (e as Error).message)} (after ${elapsed()})`, 10000);
+      this.notify(msg, "ERROR", 10000);
     }
   }
 
@@ -263,7 +292,7 @@ class ImportEpubModal extends Modal {
             this.close();
             await this.plugin.convertEpub(filePath);
           } catch (e) {
-            new Notice(`❌ ${err(ERR.FILE_PATH_MISSING, `Could not open file dialog: ${(e as Error).message}`)}`, 10000);
+            this.plugin.notify(`❌ ${fmtErr(ERR.FILE_PATH_MISSING, `Could not open file dialog: ${(e as Error).message}`)}`, "ERROR", 10000);
           }
         })
     );
@@ -371,9 +400,10 @@ class EpubConverterSettingTab extends PluginSettingTab {
             try {
               await downloadBinary(pluginDir, (msg) => {
                 notice.setMessage(msg);
+                this.plugin.logger.info(`Download: ${msg}`);
               });
               notice.hide();
-              new Notice("✅ markitdown ready");
+              this.plugin.notify("✅ markitdown ready");
               const { installed, version } = await checkBinaryInstalled(pluginDir);
               statusEl.setText(
                 installed
@@ -382,7 +412,7 @@ class EpubConverterSettingTab extends PluginSettingTab {
               );
             } catch (e) {
               notice.hide();
-              new Notice(`❌ Download failed: ${(e as Error).message}`, 10000);
+              this.plugin.notify(`❌ Download failed: ${(e as Error).message}`, "ERROR", 10000);
             }
             btn.setDisabled(false);
             btn.setButtonText("Download");
@@ -420,6 +450,38 @@ class EpubConverterSettingTab extends PluginSettingTab {
             this.plugin.settings.onConflict = value as "ask" | "rename" | "overwrite";
             await this.plugin.saveSettings();
           })
+      );
+
+    // ── Debug log ────────────────────────────────────────────────────────────
+    containerEl.createEl("h3", { text: "Debug log" });
+
+    new Setting(containerEl)
+      .setName("Enable debug log")
+      .setDesc("Write plugin activity to epub-converter.log inside the plugin folder. Auto-cleaned weekly.")
+      .addToggle((toggle) =>
+        toggle
+          .setValue(this.plugin.settings.debugLog)
+          .onChange(async (value) => {
+            this.plugin.settings.debugLog = value;
+            this.plugin.logger.setEnabled(value);
+            await this.plugin.saveSettings();
+          })
+      );
+
+    new Setting(containerEl)
+      .setName("Open log file")
+      .setDesc(`Log location: ${this.plugin.logger.getLogPath()}`)
+      .addButton((btn) =>
+        btn.setButtonText("Open log").onClick(() => {
+          const logPath = this.plugin.logger.getLogPath();
+          if (!fs.existsSync(logPath)) {
+            new Notice("Log file is empty — no entries yet.");
+            return;
+          }
+          // Open in default system app (TextEdit / Notepad)
+          const { shell } = require("electron");
+          shell.openPath(logPath);
+        })
       );
   }
 
