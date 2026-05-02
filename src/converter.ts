@@ -138,7 +138,7 @@ export async function runConversion(
   const bin = binaryPath(pluginDir);
 
   if (!fs.existsSync(bin)) {
-    progress.onError("markitdown binary not found. Please go to EPUB Converter settings and click Download.");
+    progress.onError("[EC-004] markitdown binary not found. Please go to EPUB Converter settings and click Download.");
     return;
   }
 

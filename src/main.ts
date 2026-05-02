@@ -19,6 +19,23 @@ import {
   runConversion,
 } from "./converter";
 
+// ── Error codes ───────────────────────────────────────────────────────────────
+export const ERR = {
+  NO_FILE_SELECTED:    "EC-001",  // File picker closed with no selection
+  FILE_PATH_MISSING:   "EC-002",  // Electron did not return a file path
+  FILE_NOT_FOUND:      "EC-003",  // epub path does not exist on disk
+  BINARY_NOT_FOUND:    "EC-004",  // markitdown binary missing from plugin dir
+  DOWNLOAD_FAILED:     "EC-005",  // downloading binary from GitHub failed
+  CONVERSION_FAILED:   "EC-006",  // markitdown exited non-zero
+  UNSUPPORTED_PLATFORM:"EC-007",  // no binary for this OS/arch
+  OUTPUT_DIR_FAILED:   "EC-008",  // could not create output directory
+  UNKNOWN:             "EC-099",  // unexpected error
+} as const;
+
+function err(code: string, msg: string) {
+  return `[${code}] ${msg}`;
+}
+
 // ── ribbon icon (book svg) ──────────────────────────────────────────────────
 const BOOK_ICON_ID = "epub-converter-book";
 addIcon(
@@ -84,7 +101,7 @@ export default class EpubConverterPlugin extends Plugin {
     } catch (e) {
       notice.hide();
       new Notice(
-        `📚 EPUB Converter: Auto-download failed — ${(e as Error).message}. Open Settings → EPUB Converter to retry.`,
+        `❌ ${err(ERR.DOWNLOAD_FAILED, (e as Error).message)} — Open Settings → EPUB Converter to retry.`,
         15000
       );
     }
@@ -101,7 +118,7 @@ export default class EpubConverterPlugin extends Plugin {
   /** Convert an epub path (vault-relative or absolute) */
   async convertEpub(epubVaultRelOrAbsolute: string) {
     if (!epubVaultRelOrAbsolute) {
-      new Notice("❌ EPUB Converter: No file path provided.", 8000);
+      new Notice(`❌ ${err(ERR.FILE_PATH_MISSING, "No file path received from picker.")}`, 8000);
       return;
     }
 
@@ -111,18 +128,20 @@ export default class EpubConverterPlugin extends Plugin {
       : path.join(vaultRoot, epubVaultRelOrAbsolute);
 
     if (!fs.existsSync(epubAbsolute)) {
-      new Notice(`❌ EPUB Converter: File not found:\n${epubAbsolute}`, 10000);
+      new Notice(`❌ ${err(ERR.FILE_NOT_FOUND, `File not found:\n${epubAbsolute}`)}`, 10000);
       return;
     }
 
-    const booksDir = path.join(vaultRoot, this.settings.outputFolder);
-    fs.mkdirSync(booksDir, { recursive: true });
+    let booksDir: string;
+    try {
+      booksDir = path.join(vaultRoot, this.settings.outputFolder);
+      fs.mkdirSync(booksDir, { recursive: true });
+    } catch (e) {
+      new Notice(`❌ ${err(ERR.OUTPUT_DIR_FAILED, `Cannot create output folder: ${(e as Error).message}`)}`, 10000);
+      return;
+    }
 
-    const outputDir = deriveOutputFolder(
-      epubAbsolute,
-      booksDir,
-      this.settings.onConflict
-    );
+    const outputDir = deriveOutputFolder(epubAbsolute, booksDir, this.settings.onConflict);
 
     if (this.settings.onConflict === "ask" && fs.existsSync(outputDir)) {
       new ConflictModal(this.app, outputDir, async (choice) => {
@@ -132,7 +151,6 @@ export default class EpubConverterPlugin extends Plugin {
         } else if (choice === "overwrite") {
           await this._runConversion(epubAbsolute, outputDir);
         }
-        // else: cancel – do nothing
       }).open();
       return;
     }
@@ -168,15 +186,15 @@ export default class EpubConverterPlugin extends Plugin {
             new Notice(`✅ Import complete: ${path.basename(outputDir)}`);
             this._refreshVault(outputDir);
           },
-          onError: (err) => {
+          onError: (errMsg) => {
             notice.hide();
-            new Notice(`❌ EPUB Converter: ${err}`, 10000);
+            new Notice(`❌ ${err(ERR.CONVERSION_FAILED, errMsg)}`, 10000);
           },
         }
       );
     } catch (e) {
       notice.hide();
-      new Notice(`❌ EPUB Converter: ${(e as Error).message}`, 10000);
+      new Notice(`❌ ${err(ERR.UNKNOWN, (e as Error).message)}`, 10000);
     }
   }
 
@@ -224,22 +242,21 @@ class ImportEpubModal extends Modal {
       btn
         .setButtonText("Browse…")
         .setCta()
-        .onClick(() => {
-          const input = document.createElement("input");
-          input.type = "file";
-          input.accept = ".epub";
-          input.onchange = async () => {
-            const file = input.files?.[0];
-            if (!file) return;
-            const filePath = (file as any).path as string | undefined;
-            if (!filePath) {
-              new Notice("❌ Could not get file path. Try dragging the EPUB into your vault first.", 8000);
-              return;
-            }
+        .onClick(async () => {
+          try {
+            // Use Electron's native dialog for reliable absolute paths
+            const { remote } = require("electron");
+            const result = await remote.dialog.showOpenDialog({
+              properties: ["openFile"],
+              filters: [{ name: "EPUB files", extensions: ["epub"] }],
+            });
+            if (result.canceled || result.filePaths.length === 0) return;
+            const filePath = result.filePaths[0];
             this.close();
             await this.plugin.convertEpub(filePath);
-          };
-          input.click();
+          } catch (e) {
+            new Notice(`❌ ${err(ERR.FILE_PATH_MISSING, `Could not open file dialog: ${(e as Error).message}`)}`, 10000);
+          }
         })
     );
 
