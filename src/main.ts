@@ -83,9 +83,6 @@ export default class EpubConverterPlugin extends Plugin {
     this.addSettingTab(new EpubConverterSettingTab(this.app, this));
 
     // Auto-install markitdown if not yet present
-    const resolvedPluginDir = this.pluginDir();
-    console.log("[EPUB Converter] pluginDir resolved to:", resolvedPluginDir);
-    new Notice(`[EPUB Converter DEBUG] pluginDir: ${resolvedPluginDir}`, 15000);
     this._autoInstallIfNeeded();
   }
 
