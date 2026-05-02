@@ -35,11 +35,23 @@ export function binaryPath(pluginDir: string): string {
 export async function checkBinaryInstalled(pluginDir: string): Promise<{ installed: boolean; version?: string }> {
   const bin = binaryPath(pluginDir);
   if (!fs.existsSync(bin)) return { installed: false };
+  // Verify it's a real executable (non-empty file with execute permission)
   try {
-    const { stdout } = await execAsync(`"${bin}" --version`);
-    return { installed: true, version: stdout.trim() };
+    const stat = fs.statSync(bin);
+    if (stat.size < 1000) return { installed: false }; // suspiciously small
+    if (process.platform !== "win32") {
+      fs.accessSync(bin, fs.constants.X_OK);
+    }
   } catch {
     return { installed: false };
+  }
+  // Best-effort version string (don't fail if subprocess can't run)
+  try {
+    const { stdout } = await execAsync(`"${bin}" --version`, { timeout: 5000 });
+    return { installed: true, version: stdout.trim() };
+  } catch {
+    // Binary exists and is executable even if --version has issues
+    return { installed: true };
   }
 }
 
